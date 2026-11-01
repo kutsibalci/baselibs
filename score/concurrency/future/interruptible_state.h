@@ -56,18 +56,25 @@ struct IsScoped<safecpp::CopyableScopedFunction<T>> : std::true_type
 {
 };
 
-/// @brief Whether the typed SetValue() overloads of InterruptibleState<Value> accept one argument of type Arg.
+/// @brief Whether the typed SetValue() overloads of InterruptibleState<Value> accept the arguments Args.
 ///
-/// They accept a Value, an object derived from Value, and anything implicitly convertible to Value.
-/// They do so only if Value can be copied or moved in.
+/// They take exactly one argument, so no other number of arguments is theirs.
+template <typename Value, typename... Args>
+struct IsAcceptedByTypedSetValue : std::false_type
+{
+};
+
+/// @brief Whether SetValue(Value&&) or SetValue(const Value&) can be called with one argument of type Arg.
+///
+/// Each clause is one of those overloads: the trait that enables it, then the conversion to its parameter.
 /// The in-place SetValue() overload leaves these calls to them, because taking them over would change what they do.
-/// A derived lvalue or a converting argument could reach a different constructor of Value.
+/// An object of type Value or derived from it could reach a forwarding constructor instead of the copy constructor.
+/// An argument that converts to Value could reach an explicit constructor instead of the implicit one.
 /// A bit-field cannot bind to a forwarding reference, and a template cannot tell it from any other lvalue.
 template <typename Value, typename Arg>
-struct IsAcceptedByTypedSetValue
-    : std::bool_constant<(std::is_copy_constructible_v<Value> || std::is_move_constructible_v<Value>) &&
-                         (std::is_base_of_v<std::remove_cv_t<Value>, std::decay_t<Arg>> ||
-                          std::is_convertible_v<Arg, Value>)>
+struct IsAcceptedByTypedSetValue<Value, Arg>
+    : std::bool_constant<(std::is_move_constructible_v<Value> && std::is_convertible_v<Arg, Value&&>) ||
+                         (std::is_copy_constructible_v<Value> && std::is_convertible_v<Arg, const Value&>)>
 {
 };
 
@@ -123,8 +130,7 @@ class InterruptibleState final : public score::concurrency::detail::TypedBaseInt
     /// @return true if this call set the value, false if a value or an error had already been set.
     template <typename... Args,
               std::enable_if_t<std::is_constructible_v<Value, Args...> &&
-                                   !((sizeof...(Args) == 1U) &&
-                                     std::conjunction_v<detail::IsAcceptedByTypedSetValue<Value, Args>...>),
+                                   !detail::IsAcceptedByTypedSetValue<Value, Args...>::value,
                                bool> = true>
     // coverity[autosar_cpp14_a13_3_1_violation] overloaded with the two above so that braced-init-lists still work
     bool SetValue(Args&&... args)

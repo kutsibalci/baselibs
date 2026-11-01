@@ -15,7 +15,6 @@
 
 #include <cstdint>
 #include <type_traits>
-#include <utility>
 
 namespace score
 {
@@ -95,167 +94,192 @@ class ThrowingMoveOnlyType : public CopyAndMovableType
     ~ThrowingMoveOnlyType() = default;
 };
 
-/// @brief Constructible from one argument or from two, but neither copyable nor movable.
+/// @brief Neither copyable nor movable, and implicitly constructible from one int or from two.
 ///
-/// Such a value can only enter a score::Result by being constructed there.
-/// SetValue() therefore accepts it only when it is handed constructor arguments rather than an object.
-/// The two-argument constructor stores their sum, so a test can tell whether both arguments arrived.
-class NeitherCopyNorMoveType : public CopyAndMovableType
+/// The two-argument constructor stores the sum of its arguments.
+class NeitherCopyNorMoveType
 {
   public:
-    using CopyAndMovableType::CopyAndMovableType;
-    NeitherCopyNorMoveType(int first, int second) : CopyAndMovableType{first + second} {}
+    // coverity[autosar_cpp14_a12_1_4_violation] implicit on purpose, see above
+    NeitherCopyNorMoveType(int value) : value_{value} {}
+    NeitherCopyNorMoveType(int first, int second) : value_{first + second} {}
     NeitherCopyNorMoveType(const NeitherCopyNorMoveType&) = delete;
     NeitherCopyNorMoveType& operator=(const NeitherCopyNorMoveType&) = delete;
     NeitherCopyNorMoveType(NeitherCopyNorMoveType&&) = delete;
     NeitherCopyNorMoveType& operator=(NeitherCopyNorMoveType&&) = delete;
 
     ~NeitherCopyNorMoveType() = default;
+
+    /// @brief The value given at construction.
+    [[nodiscard]] int GetValue() const noexcept
+    {
+        return value_;
+    }
+
+  private:
+    /// @brief The value given at construction.
+    int value_;
 };
 
-/// @brief Default constructible, holding kDefaultValue when constructed without arguments.
+/// @brief Default constructible, holding kDefaultValue afterwards.
 ///
-/// kDefaultValue is deliberately not zero, so that a value which was never constructed cannot pass for one that was.
-class DefaultConstructibleType : public CopyAndMovableType
+/// kDefaultValue is deliberately not zero, so that zeroed storage cannot pass for a constructed object.
+class DefaultConstructibleType
 {
   public:
-    DefaultConstructibleType() : CopyAndMovableType{kDefaultValue} {}
+    /// @brief The value held after default construction.
+    [[nodiscard]] int GetValue() const noexcept
+    {
+        return value_;
+    }
 
     /// @brief The value held after default construction.
     static constexpr int kDefaultValue{17};
+
+  private:
+    /// @brief Holds kDefaultValue from construction on.
+    int value_{kDefaultValue};
 };
 
-/// @brief Counts every move construction into a counter supplied at construction.
-///
-/// It shows that handing SetValue() constructor arguments moves nothing.
-/// That is only meaningful next to the contrasting case, where handing it an object moves exactly once.
-class MoveCountingType : public CopyAndMovableType
+/// @brief Move only, incrementing a counter supplied at construction each time it is move constructed.
+class MoveCountingType
 {
   public:
-    MoveCountingType(int value, int& move_count) : CopyAndMovableType{value}, move_count_{&move_count} {}
-    MoveCountingType(const MoveCountingType&) noexcept = default;
-    MoveCountingType& operator=(const MoveCountingType&) noexcept = delete;
-    MoveCountingType(MoveCountingType&& other) noexcept : CopyAndMovableType{other}, move_count_{other.move_count_}
+    MoveCountingType(int value, int& move_count) : value_{value}, move_count_{&move_count} {}
+    MoveCountingType(const MoveCountingType&) = delete;
+    MoveCountingType& operator=(const MoveCountingType&) = delete;
+    MoveCountingType(MoveCountingType&& other) noexcept : value_{other.value_}, move_count_{other.move_count_}
     {
         ++(*move_count_);
     }
-    MoveCountingType& operator=(MoveCountingType&&) noexcept = delete;
+    MoveCountingType& operator=(MoveCountingType&&) = delete;
 
-    ~MoveCountingType() noexcept = default;
+    ~MoveCountingType() = default;
+
+    /// @brief The value given at construction.
+    [[nodiscard]] int GetValue() const noexcept
+    {
+        return value_;
+    }
 
   private:
-    /// @brief Incremented on each move construction; owned by the test, which outlives this object.
+    /// @brief The value given at construction.
+    int value_;
+    /// @brief Incremented on each move construction; owned by the caller, and has to outlive this object.
     int* move_count_;
 };
 
-/// @brief Has a perfect-forwarding converting constructor that is guarded against its own type.
+/// @brief Has a forwarding constructor that excludes exactly this type, and records if it was copy constructed.
 ///
-/// SetValue() preserves the value category of its arguments.
-/// A non-const lvalue of this type is therefore offered to overload resolution as `GuardedForwardingType&`.
-/// Because the forwarding constructor excludes its own type, the copy constructor is still chosen.
-/// Without that guard the forwarding constructor would be the better match and would win.
-class GuardedForwardingType : public CopyAndMovableType
+/// An object of a derived type is not excluded, so direct-initialisation from one takes the forwarding constructor.
+class ForwardingCtorExcludingSelfType
 {
   public:
-    template <typename T, std::enable_if_t<!std::is_same<std::decay_t<T>, GuardedForwardingType>::value, bool> = true>
-    explicit GuardedForwardingType(T&& value) : CopyAndMovableType{std::forward<T>(value)}, was_copied_{false}
+    template <typename T,
+              std::enable_if_t<!std::is_same_v<std::decay_t<T>, ForwardingCtorExcludingSelfType>, bool> = true>
+    explicit ForwardingCtorExcludingSelfType(T&&)
     {
     }
-    GuardedForwardingType(const GuardedForwardingType& other) : CopyAndMovableType{other}, was_copied_{true} {}
-    GuardedForwardingType& operator=(const GuardedForwardingType&) = delete;
-    GuardedForwardingType(GuardedForwardingType&&) = delete;
-    GuardedForwardingType& operator=(GuardedForwardingType&&) = delete;
+    ForwardingCtorExcludingSelfType(const ForwardingCtorExcludingSelfType&) : was_copy_constructed_{true} {}
+    ForwardingCtorExcludingSelfType& operator=(const ForwardingCtorExcludingSelfType&) = delete;
+    ForwardingCtorExcludingSelfType(ForwardingCtorExcludingSelfType&&) = delete;
+    ForwardingCtorExcludingSelfType& operator=(ForwardingCtorExcludingSelfType&&) = delete;
 
-    ~GuardedForwardingType() = default;
+    ~ForwardingCtorExcludingSelfType() = default;
 
-    bool WasCopyConstructed() const noexcept
+    /// @brief Whether the copy constructor produced this object.
+    [[nodiscard]] bool WasCopyConstructed() const noexcept
     {
-        return was_copied_;
+        return was_copy_constructed_;
     }
 
   private:
-    /// @brief true if this object was produced by the copy constructor, false if by the forwarding one.
-    bool was_copied_;
+    /// @brief true if the copy constructor produced this object, false if the forwarding one did.
+    bool was_copy_constructed_{false};
+};
+
+/// @brief Derived from ForwardingCtorExcludingSelfType, whose forwarding constructor therefore does not exclude it.
+class DerivedFromForwardingCtorExcludingSelfType : public ForwardingCtorExcludingSelfType
+{
+  public:
+    using ForwardingCtorExcludingSelfType::ForwardingCtorExcludingSelfType;
+};
+
+/// @brief Has a forwarding constructor that also takes this type, and records if it was copy constructed.
+///
+/// Direct-initialisation from a non-const lvalue of this type takes the forwarding constructor.
+class ForwardingCtorAcceptingSelfType
+{
+  public:
+    // Takes its own type on purpose, which is the hazard that bugprone-forwarding-reference-overload describes.
+    // NOLINTBEGIN(bugprone-forwarding-reference-overload)
+    template <typename T>
+    explicit ForwardingCtorAcceptingSelfType(T&&)
+    {
+    }
+    // NOLINTEND(bugprone-forwarding-reference-overload)
+    ForwardingCtorAcceptingSelfType(const ForwardingCtorAcceptingSelfType&) : was_copy_constructed_{true} {}
+    ForwardingCtorAcceptingSelfType& operator=(const ForwardingCtorAcceptingSelfType&) = delete;
+    ForwardingCtorAcceptingSelfType(ForwardingCtorAcceptingSelfType&&) = delete;
+    ForwardingCtorAcceptingSelfType& operator=(ForwardingCtorAcceptingSelfType&&) = delete;
+
+    ~ForwardingCtorAcceptingSelfType() = default;
+
+    /// @brief Whether the copy constructor produced this object.
+    [[nodiscard]] bool WasCopyConstructed() const noexcept
+    {
+        return was_copy_constructed_;
+    }
+
+  private:
+    /// @brief true if the copy constructor produced this object, false if the forwarding one did.
+    bool was_copy_constructed_{false};
 };
 
 /// @brief Copyable and movable, with a non-explicit constructor taking two arguments.
 ///
 /// It can therefore be copy-list-initialised from a braced-init-list such as `{1, 2}`.
-/// The constructor stores the sum of its arguments, so a test can tell whether both arrived.
-class ListInitialisableType : public CopyAndMovableType
+/// The constructor stores the sum of its arguments.
+class ListInitialisableType
 {
   public:
-    ListInitialisableType(int first, int second) : CopyAndMovableType{first + second} {}
-};
+    ListInitialisableType(int first, int second) : value_{first + second} {}
 
-/// @brief Has a perfect-forwarding converting constructor that is NOT guarded against its own type.
-///
-/// For a non-const lvalue of this type, `T&&` deduced as `UnguardedForwardingType&` beats the copy constructor.
-/// Whether SetValue() copies therefore depends on what it offers to overload resolution.
-/// The tests using this type pin that down.
-class UnguardedForwardingType : public CopyAndMovableType
-{
-  public:
-    // Unguarded on purpose, to reproduce the hazard that bugprone-forwarding-reference-overload describes.
-    // The tests use it to show that SetValue() still copies in its presence.
-    // NOLINTBEGIN(bugprone-forwarding-reference-overload)
-    template <typename T>
-    explicit UnguardedForwardingType(T&& value) : CopyAndMovableType{std::forward<T>(value)}, was_copied_{false}
+    /// @brief The sum of the constructor arguments.
+    [[nodiscard]] int GetValue() const noexcept
     {
-    }
-    // NOLINTEND(bugprone-forwarding-reference-overload)
-    UnguardedForwardingType(const UnguardedForwardingType& other) : CopyAndMovableType{other}, was_copied_{true} {}
-    UnguardedForwardingType& operator=(const UnguardedForwardingType&) = delete;
-    UnguardedForwardingType(UnguardedForwardingType&&) = delete;
-    UnguardedForwardingType& operator=(UnguardedForwardingType&&) = delete;
-
-    ~UnguardedForwardingType() = default;
-
-    bool WasCopyConstructed() const noexcept
-    {
-        return was_copied_;
+        return value_;
     }
 
   private:
-    /// @brief true if this object was produced by the copy constructor, false if by the forwarding one.
-    bool was_copied_;
+    /// @brief The sum of the constructor arguments.
+    int value_;
 };
 
-/// @brief Derived from GuardedForwardingType, whose guard excludes only that exact type.
+/// @brief Move only, with an implicit constructor from std::int64_t and an explicit one from int, recording which ran.
 ///
-/// The base's forwarding constructor accepts an lvalue of this type and matches it better than the copy constructor.
-/// Handed to SetValue() of the base type, it has always been copied, and the tests pin that down.
-class DerivedFromGuardedForwardingType : public GuardedForwardingType
-{
-  public:
-    using GuardedForwardingType::GuardedForwardingType;
-};
-
-/// @brief Has an implicit converting constructor from std::int64_t and an explicit one from int.
-///
-/// An implicit conversion from int can only use the first, while direct construction from int picks the second.
-/// Which of the two ran is recorded.
-/// A test can thus tell whether SetValue() converted its argument, as it always has, or constructed the value directly.
-class ImplicitlyAndExplicitlyConstructibleType : public CopyAndMovableType
+/// Copy-initialisation from int can only use the first, while direct-initialisation from int picks the second.
+class ImplicitlyAndExplicitlyConstructibleType
 {
   public:
     // coverity[autosar_cpp14_a12_1_4_violation] implicit on purpose, see above
-    ImplicitlyAndExplicitlyConstructibleType(std::int64_t value)
-        : CopyAndMovableType{static_cast<int>(value)}, was_converted_implicitly_{true}
-    {
-    }
-    explicit ImplicitlyAndExplicitlyConstructibleType(int value)
-        : CopyAndMovableType{value}, was_converted_implicitly_{false}
-    {
-    }
+    ImplicitlyAndExplicitlyConstructibleType(std::int64_t) : was_converted_implicitly_{true} {}
+    explicit ImplicitlyAndExplicitlyConstructibleType(int) : was_converted_implicitly_{false} {}
+    ImplicitlyAndExplicitlyConstructibleType(const ImplicitlyAndExplicitlyConstructibleType&) = delete;
+    ImplicitlyAndExplicitlyConstructibleType& operator=(const ImplicitlyAndExplicitlyConstructibleType&) = delete;
+    ImplicitlyAndExplicitlyConstructibleType(ImplicitlyAndExplicitlyConstructibleType&&) noexcept = default;
+    ImplicitlyAndExplicitlyConstructibleType& operator=(ImplicitlyAndExplicitlyConstructibleType&&) = delete;
 
-    bool WasConvertedImplicitly() const noexcept
+    ~ImplicitlyAndExplicitlyConstructibleType() = default;
+
+    /// @brief Whether the implicit constructor ran.
+    [[nodiscard]] bool WasConvertedImplicitly() const noexcept
     {
         return was_converted_implicitly_;
     }
 
   private:
-    /// @brief true if this object was produced by the implicit constructor, false if by the explicit one.
+    /// @brief true if the implicit constructor ran, false if the explicit one did.
     bool was_converted_implicitly_;
 };
 
